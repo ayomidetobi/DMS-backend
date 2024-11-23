@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime
 import json
 import os
 import unicodedata
@@ -12,14 +12,15 @@ from ..models import Document, Entity
 
 
 def normalize_text(text):
-    """
-    Normalizes text by removing diacritical marks and converting to a standard form.
-    This helps in matching Portuguese special characters.
-    """
     if text:
         return unicodedata.normalize("NFKD", text).encode("ASCII", "ignore").decode("utf-8")
     return text
-
+def parse_custom_date(date_string):
+    try:
+        return datetime.strptime(date_string, '%d-%m-%Y').date()
+    except ValueError:
+        print(f"Invalid date format: {date_string}")
+        return None
 
 def parse_html(file_path):
 
@@ -35,8 +36,7 @@ def parse_html(file_path):
                 return None
             sibling_td = label_td.find_next_sibling("td")
             if sibling_td:
-
-                return sibling_td.get_text(strip=True, separator=" ").replace("\xa0", " ")
+                return sibling_td.get_text(strip=True, separator=" ").replace("\xa0", " ").strip()
             return None
 
 
@@ -52,17 +52,16 @@ def parse_html(file_path):
 
         metadata = {key: value if value else "" for key, value in metadata.items()}
 
-
+       
         missing_fields = [key for key, value in metadata.items() if not value]
         if missing_fields:
             print(
                 f"Warning: Missing metadata fields in file {file_path}: {', '.join(missing_fields)}"
             )
+        
 
-
-        main_text_section = soup.find(
-            "td", text=lambda x: x and "Decisão Texto Integral:" in normalize_text(x)
-        )
+        main_text_section = soup.find("td", text=lambda x: x and "Decisão Texto Integral:" in x)
+        print("Found main_text_section:", main_text_section is not None)
         if main_text_section:
             sibling_td = main_text_section.find_next_sibling("td")
             if sibling_td:
@@ -71,9 +70,8 @@ def parse_html(file_path):
                 main_text = ""
         else:
             main_text = ""
-
         return metadata, main_text
-
+    
     except Exception as e:
         raise ValueError(f"Error parsing HTML structure in file {file_path}: {e}")
 
@@ -96,7 +94,7 @@ def process_file(file_name, data_folder):
                 tribunal=metadata["tribunal"],
                 summary=metadata["summary"],
                 decision=metadata["decision"],
-                date=parse_date(metadata["date"]),
+                date=parse_custom_date(metadata["date"]),
                 descriptors=metadata["descriptors"],
                 main_text=main_text,
             )

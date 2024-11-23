@@ -2,4 +2,5 @@
 # /data
 /.pytest_cache
 /venv
-
+/staticfiles
+/locale

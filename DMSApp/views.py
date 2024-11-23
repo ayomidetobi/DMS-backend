@@ -4,6 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
+from django.utils.translation import gettext as _
 
 from .models import Document
 from .serializers import DocumentSerializer
