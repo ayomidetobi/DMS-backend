@@ -33,7 +33,7 @@ SECRET_KEY = config('SECRET_KEY', default='unsafe-secret-key')
 DEBUG = config('DEBUG', default=False, cast=bool)
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost',cast=Csv())
 CSRF_TRUSTED_ORIGINS = config('CSRF_TRUSTED_ORIGINS', default='http://localhost',cast=Csv())
-
+CORS_ALLOWED_ORIGINS=config('CORS_ALLOWED_ORIGINS', default='http://localhost',cast=Csv())
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -58,9 +58,10 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.middleware.locale.LocaleMiddleware',
+    'DMSApp.etag_middleware.ETagMiddleware',
 ]
 
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS =config('CORS_ALLOW_ALL_ORIGINS', default=False, cast=bool)
 
 ROOT_URLCONF = 'Documents.urls'
 
@@ -138,7 +139,7 @@ LOCALE_PATHS = [
 ]
 
 DATE_INPUT_FORMATS = [
-    '%d-%m-%Y',  # Add the format DD-MM-YYYY
+    '%d-%m-%Y',  
 ] + getattr(settings, 'DATE_INPUT_FORMATS', [])
 
 USE_TZ = True
@@ -148,7 +149,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 
 STATIC_URL = 'static/'
-STATICFILES_DIRS = [os.path.join(BASE_DIR,'static')]
+# STATICFILES_DIRS = [os.path.join(BASE_DIR,'static')]
 STATIC_ROOT =os.path.join(BASE_DIR, 'staticfiles') 
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 

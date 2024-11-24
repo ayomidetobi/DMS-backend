@@ -1,84 +1,193 @@
 import pytest
-from unittest.mock import patch, mock_open, MagicMock
 import os
-from datetime import datetime
+import json
+from datetime import date
+from unittest.mock import mock_open, patch, MagicMock
 from bs4 import BeautifulSoup
+from django.db import IntegrityError
+
 from DMSApp.models import Document, Entity
-from DMSApp.utils.seeding_scripts import normalize_text, parse_html, parse_json, process_file, seed_database_parallel
+from DMSApp.utils.seeding_scripts import (
+    convert_date_to_standard_format,
+    extract_metadata_and_text_from_html,
+    load_json_file,
+    process_html_and_json_files,
+    populate_database_with_files
+)
 
-# Mock Django models for testing
 @pytest.fixture
-def mock_document():
-    return MagicMock(spec=Document)
+def sample_html_content():
+    return """
+    <table>
+        <tr><td>Processo:</td><td>123/2024</td></tr>
+        <tr><td>Relator:</td><td>Supreme Court</td></tr>
+        <tr><td>Descritores:</td><td>Criminal Law</td></tr>
+        <tr><td>Data do Acordão:</td><td>15-03-2024</td></tr>
+        <tr><td>Decisão:</td><td>Approved</td></tr>
+        <tr><td>Sumário:</td><td>Case Summary</td></tr>
+        <tr><td>Decisão Texto Integral:</td><td>This is the main text of the decision.</td></tr>
+    </table>
+    """
 
 @pytest.fixture
-def mock_entity():
-    return MagicMock(spec=Entity)
+def sample_json_content():
+    return {
+        "entities": [
+            {
+                "name": "John Doe",
+                "label": "PERSON",
+                "url": "http://example.com/john"
+            }
+        ]
+    }
 
+class TestDateConverter:
+    @pytest.mark.parametrize("input_date,expected", [
+        ("15-03-2024", date(2024, 3, 15)),
+        ("invalid-date", None),
+        ("", None),
+        (None, None),
+    ])
+    def test_convert_date_to_standard_format(self, input_date, expected):
+        result = convert_date_to_standard_format(input_date)
+        assert result == expected
 
-def test_normalize_text():
-    assert normalize_text("ação") == "acao"
-    assert normalize_text("café") == "cafe"
-    assert normalize_text("São João") == "Sao Joao"
-    assert normalize_text("") == ""
+class TestMetadataExtraction:
+    def test_successful_extraction(self, sample_html_content):
+        with patch("builtins.open", mock_open(read_data=sample_html_content)):
+            with patch("os.path.exists") as mock_exists:
+                mock_exists.return_value = True
+                metadata, main_text = extract_metadata_and_text_from_html("dummy.html")
 
+        assert metadata["process_number"] == "123/2024"
+        assert metadata["tribunal"] == "Supreme Court"
+        assert metadata["descriptors"] == "Criminal Law"
+        assert metadata["date"] == "15-03-2024"
+        assert metadata["decision"] == "Approved"
+        assert metadata["summary"] == "Case Summary"
+        assert main_text == "This is the main text of the decision."
 
-@patch("builtins.open", new_callable=mock_open, read_data="<html><body><td>Processo:</td><td>12345</td></body></html>")
-def test_parse_html(mock_file):
-    metadata, main_text = parse_html("test.html")
-    assert metadata["process_number"] == "12345"
-    assert main_text == ""
+    def test_file_not_found(self):
+        with pytest.raises(FileNotFoundError):
+            extract_metadata_and_text_from_html("nonexistent.html")
 
+    def test_missing_metadata_fields(self):
+        incomplete_html = "<table><tr><td>Processo:</td><td>123/2024</td></tr></table>"
+        with patch("builtins.open", mock_open(read_data=incomplete_html)):
+            with patch("os.path.exists") as mock_exists:
+                mock_exists.return_value = True
+                metadata, main_text = extract_metadata_and_text_from_html("dummy.html")
 
-@patch("builtins.open", new_callable=mock_open, read_data='{"entities": [{"name": "Entity1", "label": "Label1", "url": "http://example.com"}]}')
-def test_parse_json(mock_file):
-    entities = parse_json("test.json")
-    assert len(entities["entities"]) == 1
-    assert entities["entities"][0]["name"] == "Entity1"
-    assert entities["entities"][0]["label"] == "Label1"
+        assert metadata["process_number"] == "123/2024"
+        assert metadata["tribunal"] == ""
+        assert main_text == ""
 
+class TestJsonLoading:
+    def test_successful_json_load(self, sample_json_content):
+        with patch("builtins.open", mock_open(read_data=json.dumps(sample_json_content))):
+            with patch("os.path.exists") as mock_exists:
+                mock_exists.return_value = True
+                result = load_json_file("dummy.json")
 
-@patch("os.path.exists", return_value=True)
-@patch("builtins.open", side_effect=[
-    mock_open(read_data="<html><body><td>Processo:</td><td>12345</td></body></html>").return_value,
-    mock_open(read_data='{"entities": [{"name": "Entity1", "label": "Label1", "url": "http://example.com"}]}').return_value
-])
-def test_process_file(mock_open, mock_exists):
-    document, entities = process_file("test.html", "data")
-    assert document.process_number == "12345"
-    assert len(entities) == 1
-    assert entities[0].name == "Entity1"
-    assert entities[0].label == "Label1"
+        assert result == sample_json_content
+
+    def test_file_not_found(self):
+        result = load_json_file("nonexistent.json")
+        assert result == {}
+
+    def test_invalid_json(self):
+        with patch("builtins.open", mock_open(read_data="invalid json")):
+            with patch("os.path.exists") as mock_exists:
+                mock_exists.return_value = True
+                result = load_json_file("dummy.json")
+
+        assert result == {}
+
+class TestFileProcessing:
+    @pytest.fixture
+    def mock_document_model(self):
+        return MagicMock()
+
+    def test_successful_processing(self, sample_html_content, sample_json_content, mock_document_model):
+        mock_file = mock_open(read_data=sample_html_content)
+        mock_json = mock_open(read_data=json.dumps(sample_json_content))
+        
+        def side_effect(filename, *args, **kwargs):
+            if filename.endswith('.html'):
+                return mock_file.return_value
+            return mock_json.return_value
+
+        with patch("builtins.open", side_effect=side_effect):
+            with patch("os.path.exists") as mock_exists:
+                mock_exists.return_value = True
+                with patch('bs4.BeautifulSoup', return_value=BeautifulSoup(sample_html_content, 'html.parser')):
+                    document, entities = process_html_and_json_files("test.html", "data/")
+
+        assert document is not None
+        assert document.process_number == "123/2024"
+        assert len(entities) == 1
+        assert entities[0].name == "John Doe"
 
 
 @pytest.mark.django_db
-@patch("os.listdir", return_value=["test1.html", "test2.html"])
-@patch("DMSApp.utils.seeding_scripts.process_file", side_effect=[
-    # Simulate one valid file and one invalid file
-    (MagicMock(spec=Document, process_number="12345"), [
-        MagicMock(spec=Entity, name="Entity1", label="Label1", url="http://example.com")
-    ]),
-    (None, [])  # Simulate an invalid file returning no data
-])
-@patch("DMSApp.models.Document.objects.create")
-@patch("DMSApp.models.Document.objects.get")
-@patch("DMSApp.models.Entity.objects.create")
-def test_seed_database_parallel(
-    mock_create_entity, mock_get_document, mock_create_document, mock_process_file, mock_listdir
-):
-    # Mock Document.objects.get to return the created document
-    mock_document = MagicMock(spec=Document, process_number="12345")
-    mock_get_document.return_value = mock_document
+class TestDatabasePopulation:
+    @pytest.fixture
+    def mock_document_objects(self):
+        mock = MagicMock()
+        mock.get.return_value = MagicMock(spec=Document)
+        return mock
 
-    # Call the function
-    seed_database_parallel(data_folder="data")
+    @pytest.fixture
+    def mock_entity_objects(self):
+        return MagicMock()
 
-    # Debugging: Print mock call arguments to verify behavior
-    print("Document Mock Call Args:", mock_create_document.call_args_list)
-    print("Entity Mock Call Args:", mock_create_entity.call_args_list)
+    def test_successful_population(self, sample_html_content, sample_json_content, 
+                                 mock_document_objects, mock_entity_objects):
+        mock_file = mock_open(read_data=sample_html_content)
+        mock_json = mock_open(read_data=json.dumps(sample_json_content))
 
-    # Assert Document.objects.create was called for the valid document
-    assert mock_create_document.call_count == 1, "Expected Document.objects.create to be called once."
+        def side_effect(filename, *args, **kwargs):
+            if filename.endswith('.html'):
+                return mock_file.return_value
+            return mock_json.return_value
 
-    # Assert Entity.objects.create was called for the associated entity
-    assert mock_create_entity.call_count == 1, "Expected Entity.objects.create to be called once."
+        with patch("os.listdir") as mock_listdir:
+            with patch("builtins.open", side_effect=side_effect):
+                with patch("os.path.exists") as mock_exists:
+                    with patch('bs4.BeautifulSoup', return_value=BeautifulSoup(sample_html_content, 'html.parser')):
+                        with patch.object(Document.objects, 'create', return_value=MagicMock(spec=Document)) as mock_create:
+                            mock_listdir.return_value = ["test.html"]
+                            mock_exists.return_value = True
+
+                            populate_database_with_files("data/", max_workers=1)
+
+                            # Check if the document was created successfully
+                            mock_create.assert_called_once()
+
+
+    @pytest.mark.parametrize("error_type", [
+        FileNotFoundError,
+        Exception,
+    ])
+    def test_error_handling(self, error_type, mock_document_objects):
+        with patch("os.listdir") as mock_listdir:
+            with patch("builtins.open") as mock_open:
+                mock_listdir.return_value = ["test.html"]
+                if error_type == json.JSONDecodeError:
+                    mock_open.side_effect = json.JSONDecodeError("Invalid JSON", "doc", 0)
+                else:
+                    mock_open.side_effect = error_type()
+
+                with patch.object(Document.objects, 'create') as mock_create:
+                    populate_database_with_files("data/", max_workers=1)
+                    mock_create.assert_not_called()
+
+    def test_json_decode_error_handling(self, mock_document_objects):
+        with patch("os.listdir") as mock_listdir:
+            with patch("builtins.open") as mock_open:
+                mock_listdir.return_value = ["test.html"]
+                mock_open.side_effect = json.JSONDecodeError("Invalid JSON", "doc", 0)
+
+                with patch.object(Document.objects, 'create') as mock_create:
+                    populate_database_with_files("data/", max_workers=1)
+                    mock_create.assert_not_called()

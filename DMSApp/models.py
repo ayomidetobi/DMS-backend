@@ -1,7 +1,8 @@
 from django.db import models
-
+import uuid
 
 class Document(models.Model):
+    uid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     process_number = models.CharField(max_length=100, blank=True, null=True, unique=True)
     tribunal = models.CharField(max_length=255, blank=True, null=True)
     summary = models.TextField(blank=True, null=True)

@@ -1,4 +1,5 @@
-[
+{
+  "entities":[
   {
     "name": "artigo 24º do Regulamento de Sinalização de Trânsito - RST",
     "label": "LAW",
@@ -95,3 +96,4 @@
     "url": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/1966-34509075"
   }
 ]
+}

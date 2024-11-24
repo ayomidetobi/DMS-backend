@@ -1,5 +1,5 @@
 from django.core.management.base import BaseCommand
-from DMSApp.utils.seeding_scripts import seed_database_parallel # Import your function
+from DMSApp.utils.seeding_scripts import populate_database_with_files # Import your function
 import os
 
 
@@ -34,7 +34,7 @@ class Command(BaseCommand):
         # Call the seeding function
         self.stdout.write(f"Starting database seeding from folder: {data_folder} with {max_workers} workers...")
         try:
-            seed_database_parallel(data_folder=data_folder, max_workers=max_workers)
+            populate_database_with_files(data_folder=data_folder, max_workers=max_workers)
             self.stdout.write("Database seeding completed successfully.")
         except Exception as e:
             self.stderr.write(f"An error occurred during seeding: {e}")
